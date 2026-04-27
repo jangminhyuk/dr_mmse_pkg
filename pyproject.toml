@@ -1,0 +1,17 @@
+# pyproject.toml — declarative metadata for the Python package only.
+# The C++ extension is built via CMake (see build.sh); this file is for
+# anyone who wants to `pip install -e python/` to register the wrapper.
+[project]
+name = "dr_mmse"
+version = "0.1.0"
+description = "DR-MMSE TAC: Distributionally Robust Kalman update via Frank-Wolfe over Bures-Wasserstein balls"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = ["numpy>=1.20"]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["python"]

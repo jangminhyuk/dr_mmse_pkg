@@ -1,0 +1,9 @@
+build/
+__pycache__/
+*.pyc
+*.so
+*.dylib
+*.dll
+.cache/
+.vscode/
+.idea/
