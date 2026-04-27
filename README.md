@@ -212,29 +212,31 @@ between the innovation, the gain, and any innovation-mean override.
 
 ## 5. Mapping your filter onto the API
 
-The solver is dimension-agnostic. The hard part for new users is mapping
-their own state vector and propagation onto `(APA, Σ_w_hat, H, R_hat)`.
-A few common localization architectures, sketched generically — adapt the
-state layout to your filter:
+The solver is dimension-agnostic. The main effort when integrating is
+mapping your own state vector and propagation onto
+`(APA, Σ_w_hat, H, R_hat)`. The patterns below are illustrative — the
+solver itself does not assume any particular sensor or state layout.
 
-### A. Loosely-coupled GNSS/INS (15-state error-state)
+### A. Example: loosely-coupled GNSS/INS (15-state error-state)
 
-A typical inertial-navigation error state:
+A common inertial-navigation error state:
 ```
 δx = [δp (3), δv (3), δθ (3), δb_a (3), δb_g (3)]   # nx = 15
 ```
 * `Φ_k` comes from IMU mechanization linearization (kinematic coupling
   between attitude error → velocity error → position error, plus bias
   feed-through).
-* `Σ_w` injects only on `(δv, δθ, δb_a, δb_g)` — the position row/col is
-  zero. Structurally rank ≤ 12 in a 15-state filter; consider the
-  factored API.
-* When a GNSS fix arrives: `H` selects the position rows
-  (`H = [I_3, 0, 0, 0, 0]` for absolute-position GNSS, 3D Jacobian of the
-  ECEF-to-NED projection if you measure raw pseudoranges), and `R_hat` is
-  the receiver-reported covariance.
-* `θ_w` here mostly hedges against IMU bias / mechanization mismatch.
-  `θ_v` hedges against urban-canyon / multipath GNSS errors.
+* `Σ_w` is non-zero only on the `(δv, δθ, δb_a, δb_g)` block — the
+  position rows/cols are zero. The structural rank is ≤ 12 in a 15-state
+  filter, so the factored API is a good fit.
+* When a GNSS position fix arrives in a loosely-coupled setup,
+  `H = [I_3, 0, 0, 0, 0]` selects the position rows and `R_hat` is the
+  receiver-reported position covariance. (For tightly-coupled
+  pseudoranges, each measurement contributes a 1×nx Jacobian whose
+  position block is the line-of-sight unit vector.)
+* `θ_w` here mainly hedges against IMU bias / mechanization mismatch;
+  `θ_v` hedges against measurement-side errors such as multipath in
+  challenging environments.
 
 ### B. IMU + UWB indoor localization (9-state ESKF)
 
