@@ -1,8 +1,7 @@
-"""Smoke tests for the slim DR-MMSE package.
+"""Smoke tests for the DR-MMSE package.
 
-The full battery of correctness tests is in the parent repo at
-scripts/drekf_cpp/tests/. This file covers the contract that anyone
-porting to a new platform should run before trusting the build:
+This file covers the contract that anyone porting to a new platform
+should run before trusting the build:
 
   * theta = 0 returns the standard Kalman posterior in 0 iterations.
   * Outputs are PSD.

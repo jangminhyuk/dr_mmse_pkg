@@ -2,9 +2,9 @@
 
 Measures end-to-end wall-clock per call across realistic problem sizes:
 
-  * (nx, ny) = (9, 1)   — small ESKF + scalar measurement (UWB TDoA)
+  * (nx, ny) = (9, 1)   — small ESKF + scalar range / TDoA measurement
   * (nx, ny) = (15, 3)  — INS error-state + 3D position (PVA-only INS)
-  * (nx, ny) = (21, 3)  — KF-GINS-style 21-state + 3D GNSS
+  * (nx, ny) = (21, 3)  — full INS error-state (PVA + biases + scale) + 3D position
 
 Reports cold and warm-start latency separately. Run on the actual
 deployment hardware for an honest number — laptop numbers are not
