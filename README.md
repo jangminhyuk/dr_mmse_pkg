@@ -25,26 +25,29 @@ A standard Kalman filter assumes you know two things exactly:
 * `Q` — the process-noise covariance (how uncertain your dynamics are).
 * `R` — the measurement-noise covariance (how noisy your sensor is).
 
-In practice, **you never do.** A few canonical failure modes:
+In practice, `(Q, R)` are usually only approximately known. They get
+tuned on benchtop data, on a clean stretch of trajectory, or directly
+from a sensor datasheet — and then conditions change at runtime. A few
+illustrative cases (GNSS / IMU here are just examples; the same idea
+applies to UWB, lidar, vision, encoders, magnetometers, etc.):
 
-* **GNSS in urban canyons.** Receiver-reported σ assumes line-of-sight;
-  multipath and NLOS make the true error 5–20× larger than `R` says.
-* **IMU bias drift.** The `Q` you tuned on a benchtop run becomes wrong
-  the moment temperature shifts or the IMU warms up. Filter underestimates
-  uncertainty in velocity and attitude.
-* **UWB / TDoA / lidar with occluders.** A blocked anchor reports a range
-  with the same nominal σ as a clean anchor — but the actual error is
-  meters off. `R` lies.
-* **Wheel encoders on wet ground / vision feature-matching in repetitive
-  scenes.** Same story: the noise model is right *on average* and very
-  wrong *some of the time*.
+* The receiver-reported σ for a GNSS fix can underestimate the true
+  error in environments where multipath or NLOS dominate.
+* The `Q` calibrated for an IMU at one operating point can become
+  inaccurate when temperature shifts or biases drift.
+* Range / TDoA sensors (UWB, acoustic) report nominal noise that does
+  not capture occasional blockage or NLOS bounces.
+* Vision / lidar front-ends sometimes pass through correspondences
+  whose true error is far larger than the assumed pixel- or
+  point-level noise.
 
-When `(Q, R)` are wrong, the Kalman gain is wrong: it weighs sensors and
-dynamics by the wrong relative uncertainty, and the posterior becomes
-over-confident or biased. Symptoms: filter "trusts a bad GNSS fix and
-jumps", filter "ignores a good fix because it's locked into IMU dead
-reckoning", NEES blows up, RMSE on hard segments doubles vs. easy
-segments.
+When `(Q, R)` are inaccurate, the Kalman gain weighs the dynamics and
+the measurement by the wrong relative uncertainty, and the posterior
+tends to become over-confident or slightly biased. Typical symptoms
+include the filter overreacting to a noisy measurement, or staying
+locked into dead-reckoning when a good measurement arrives; NEES
+exceeds the expected χ² envelope, and RMSE on harder segments grows
+disproportionately compared to clean segments.
 
 DR-MMSE fixes this by treating `(Q, R)` as **uncertain within a ball.**
 At every measurement, it solves a per-step minimax:
@@ -77,8 +80,8 @@ APA   = Φ_accum · P_post_prev · Φ_accumᵀ
 so the BW ball acts on `Σ_w` (process noise accumulated since the last
 measurement) instead of the full prior. This makes the optimization
 well-conditioned even for INS-style filters where `Σ_w` is structurally
-rank-deficient (e.g. process noise injected only into bias states of a
-21-dim filter).
+rank-deficient (e.g. process noise injected only into the bias states
+of a 21-state filter).
 
 The C++ solver implements **Frank-Wolfe with an exact Bures-Wasserstein
 oracle** (8 outer iterations is typically enough; warm-starting from the
@@ -119,9 +122,10 @@ PYTHONPATH=python python3 examples/01_minimal_linear.py
 PYTHONPATH=python python3 scripts/bench.py
 ```
 
-The first thing the smoke test checks is that θ=0 reproduces the standard
-Kalman posterior to machine precision. If that fails, the build is broken;
-don't continue.
+The first thing the smoke test checks is that θ=0 reproduces the
+standard Kalman posterior to machine precision. If that check fails,
+something is off with the build — investigate before relying on the
+solver outputs.
 
 ---
 
