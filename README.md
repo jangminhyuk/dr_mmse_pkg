@@ -176,21 +176,21 @@ Most filters give you `Phi_k` per propagation step. If yours doesn't, you
 can either patch the filter to expose it or bookkeep `Phi_accum` yourself
 (it's just `Phi_k @ Phi_accum` accumulated in user code).
 
-After the DR solve you must **inject the worst-case gain back into your
-filter's state and covariance**:
+After the DR solve, inject the worst-case gain back into your filter's
+state and covariance:
 ```
 x_post = x_pri + K_dr @ innov
 P_post = res.wc_Xpost
 ```
-For Joseph-form filters, the wrapper gives you `P_post` directly — you do
-NOT also apply your filter's own update. The DR solve already accounts for
-the measurement.
+For Joseph-form filters, the wrapper returns `P_post` directly. Do not
+also run your filter's own update on top — the DR solve already
+accounts for the measurement.
 
 ### "I have an INS where Σ_w is structurally low-rank"
 
-Common case: a 21-state INS only injects process noise on the 6 bias
-states, so `Σ_w` lives in a 6-dimensional subspace of a 21-dim filter
-and is rank-deficient. Use:
+For example, a 21-state INS that injects process noise only on the 6
+bias states leaves `Σ_w` in a 6-dimensional subspace of a 21-state
+filter, so `Σ_w` is rank-deficient. In that case:
 
 ```python
 solve_dr_mmse_tac_factored(APA, H, G_list, Q_hat, R_hat, theta_w, theta_v)
@@ -199,14 +199,14 @@ solve_dr_mmse_tac_factored(APA, H, G_list, Q_hat, R_hat, theta_w, theta_v)
 `G_list[k]` is `nx × nw` (the per-propagation-step noise input matrix)
 and `Σ_w = Σ_k G_k @ Q_w @ G_kᵀ`. The BW ball acts on the
 well-conditioned `Q_w (nw × nw)` matrix instead of the rank-deficient
-`Σ_w`. Cleaner numerics and faster.
+`Σ_w` — usually cleaner numerics and faster.
 
 ### Innovation sign convention
 
 Some filters define innovation as `dz = z − h(x)`, others as
-`dz = h(x) − z`. The DR solver doesn't care — it only operates on
-covariances. But your downstream code must apply the sign consistently
-between the innovation, the gain, and any innovation-mean override.
+`dz = h(x) − z`. The DR solver is unaffected by the choice — it only
+operates on covariances. The downstream code should apply the chosen
+sign consistently between the innovation and the gain.
 
 ---
 
@@ -238,78 +238,84 @@ A common inertial-navigation error state:
   `θ_v` hedges against measurement-side errors such as multipath in
   challenging environments.
 
-### B. IMU + UWB indoor localization (9-state ESKF)
+### B. Example: IMU + UWB indoor localization (9-state ESKF)
 
 A leaner error state when biases are estimated separately or considered
 small:
 ```
 δx = [δp (3), δv (3), δθ (3)]   # nx = 9
 ```
-* `Φ_k` is the same skeleton as above, minus the bias rows.
+* `Φ_k` follows the same skeleton as above, without the bias rows.
 * Each UWB measurement is a scalar TDoA or range to a known anchor:
   `H = ∂(‖p − a_i‖)/∂p` plugged into a 1×9 row, `R_hat = σ_uwb²`.
-* `θ_v` is the dominant knob — it hedges against a partially-blocked
-  anchor or NLOS bounce that pushes the residual far outside what
-  `σ_uwb` predicts.
+* `θ_v` tends to be the dominant knob here — it hedges against a
+  partially-blocked anchor or an NLOS bounce that pushes the residual
+  outside what `σ_uwb` would predict.
 
-### C. Visual-inertial / lidar-inertial (15- to 21-state)
+### C. Example: visual-inertial / lidar-inertial (15- to 21-state)
 
-Same skeleton as A, plus optionally accelerometer/gyroscope scale-factor
-or lever-arm states (→ 21-state). Measurements are landmark reprojection
-residuals (VIO) or scan-to-map residuals (LIO):
+Same skeleton as A, optionally extended with accelerometer/gyroscope
+scale-factor or lever-arm states (→ 21-state). Measurements are
+landmark reprojection residuals (VIO) or scan-to-map residuals (LIO):
 * `H` is the Jacobian of the residual w.r.t. the error state (typically
   involves the rotation Jacobian and the camera/lidar projection
   Jacobian).
 * `R_hat` is the per-feature pixel variance (VIO) or per-point
   point-to-plane variance (LIO).
-* `θ_v` here helps when you have feature-matching outliers or
-  lidar-correspondence outliers that your front-end didn't reject.
+* `θ_v` helps when feature-matching or correspondence outliers slip
+  past the front-end's gating.
 
-### D. Wheel-odometry + IMU + GPS (any state)
+### D. Other architectures
 
-The pattern is invariant to the specific state vector and sensors. As
-long as your filter does `P_pri = Φ P_post Φᵀ + Q_d` at each propagation
-and exposes `(Φ_k, Q_d, H, R_hat)`, DR-MMSE plugs in.
+The pattern is invariant to the specific state vector and sensor
+combination. As long as your filter does
+`P_pri = Φ P_post Φᵀ + Q_d` at each propagation and exposes
+`(Φ_k, Q_d, H, R_hat)`, DR-MMSE plugs in — wheel odometry + IMU + GNSS,
+attitude-only filters, multi-IMU setups, etc.
 
 ---
 
 ## 6. Tuning `(θ_w, θ_v)`
 
-`θ_w, θ_v ≥ 0` are the only knobs. Both default to 0 (= no DR). Practical
-heuristics:
+`θ_w, θ_v ≥ 0` are the only knobs. Both default to 0 (= no DR).
+Practical heuristics:
 
-* `θ_v` (measurement-noise robustness) usually **matters less** than `θ_w`
-  on dense-measurement setups, but **dominates** on intermittent /
-  outlier-heavy measurements (NLOS UWB, urban-canyon GNSS, occluded
-  feature tracks).
+* `θ_v` (measurement-noise robustness) tends to matter less than `θ_w`
+  on dense, well-behaved measurement streams, and tends to matter more
+  on intermittent or outlier-prone measurements (e.g. NLOS UWB,
+  multipath-heavy GNSS, occluded feature tracks).
 
-* `θ_w` (process-noise robustness) is the **primary knob** when the
-  dynamics model is the weak link (poorly characterized IMU, unmodeled
-  vehicle dynamics, drifting biases).
-  - `θ_w ≈ 0.001` → essentially vanilla Kalman (DR is too weak to act).
-  - `θ_w ≈ 0.5` → conservative default; performs well across mixed
-    environments.
-  - `θ_w ≈ 1.0` → aggressive; helps in harsh / outlier-heavy regimes,
-    can hurt in clean ones.
-  - `θ_w ≈ 5.0` → only useful when measurements are intermittently lost
-    and you want the filter to stay tight to the few good fixes you do
-    get.
+* `θ_w` (process-noise robustness) is typically the primary knob when
+  the dynamics model is the weaker side (poorly characterized IMU,
+  unmodeled vehicle dynamics, drifting biases).
+  - `θ_w ≈ 0.001` → effectively vanilla Kalman (DR is too small to
+    have an effect).
+  - `θ_w ≈ 0.5` → a reasonable default; tends to perform well across
+    mixed conditions.
+  - `θ_w ≈ 1.0` → more conservative; can help in challenging or
+    outlier-prone regimes, and may slightly degrade performance in
+    clean ones.
+  - `θ_w ≈ 5.0` → mainly useful when measurements are intermittently
+    lost and you want the filter to stay close to the few good fixes
+    that do arrive.
 
 * **Tune offline by grid sweep.** A 6×6 grid of `(θ_w, θ_v) ∈ {0.001,
-  0.01, 0.05, 0.1, 0.5, 1.0}` is enough for most setups. There is no
-  good online θ-selection method in this codebase — `(θ_w, θ_v)` are
-  constants per-deployment. If your robot operates in mixed regimes
-  (e.g. open sky + tunnel + parking), pick θ for the *worst* regime;
-  it is conservative on the easy regimes by ≤ 1–2 m.
+  0.01, 0.05, 0.1, 0.5, 1.0}` is typically enough. This codebase does
+  not include an online θ-selection method — `(θ_w, θ_v)` are constants
+  per-deployment. If the robot operates in mixed regimes (e.g. open sky,
+  tunnel, parking garage), tuning θ for the worst regime is a
+  reasonable starting point; the cost on easier regimes is usually
+  small.
 
-* **Diagnostic for "θ too aggressive": NEES blows up.**
-  Compute `NEES = err_postᵀ · P_post⁻¹ · err_post` and compare to
-  χ²(dof) thresholds. Mean NEES > 2× dof means the filter is
-  over-inflating uncertainty.
+* **Diagnostic for "θ too aggressive": NEES grows beyond expected
+  bounds.** Compute `NEES = err_postᵀ · P_post⁻¹ · err_post` and
+  compare to χ²(dof) thresholds. A mean NEES that exceeds roughly
+  2× dof suggests the filter is over-inflating uncertainty.
 
-* **Diagnostic for "θ too weak": filter ignores DR.**
+* **Diagnostic for "θ too weak": DR has minimal effect.**
   If `res.iterations == 0` or `res.iterations == 1` for a typical step,
-  the BW oracle is not finding any direction to inflate. Crank θ up.
+  the BW oracle is not finding a direction to inflate. Try increasing
+  θ.
 
 A grid-sweep harness pattern:
 ```python
@@ -336,12 +342,13 @@ iterations):
 | `(nx, ny) = (15, 3)` — 15-state INS + 3D position    | ~80–250 µs |
 | `(nx, ny) = (21, 3)` — 21-state INS + 3D position    | ~150–500 µs |
 
-Embedded ARM SoCs (e.g. automotive / robotic compute modules) typically
-land 2–4× slower than desktop x86 at the same problem size. Run
-`scripts/bench.py` on the actual hardware for an honest number — laptop
-benchmarks are not representative.
+Embedded ARM SoCs (e.g. automotive / robotic compute modules) tend to
+run roughly 2–4× slower than desktop x86 at the same problem size. For
+a representative number, run `scripts/bench.py` on the target hardware;
+laptop measurements may differ noticeably from the deployment
+environment.
 
-### Warm-start aggressively
+### Warm-start across steps
 Pass `warm_Sigma_w` and `warm_Sigma_v` from the previous step's result.
 This drops typical FW iterations from ~6 cold to ~1–2 warm — a ~3× speedup.
 
@@ -363,9 +370,10 @@ The two solvers in the C++ are:
 * `fw` — approximate BW oracle, up to 50 FW iterations. Faster per
   iteration but may need many more on hard problems.
 
-Empirically `fw_exact` is the right default for online filters: lower
-worst-case latency, tighter posterior. Switch to `fw` only if you have a
-hard real-time deadline that 8 exact iterations can't hit.
+Empirically `fw_exact` is the recommended default for online filters:
+lower worst-case latency and a tighter posterior. Consider switching to
+`fw` if a hard real-time deadline cannot accommodate 8 exact
+iterations.
 
 ### Symmetrize defensively
 The solver returns symmetric outputs, but if you `np.linalg.solve(S, ...)`
@@ -374,10 +382,11 @@ gain. The `DRWrapper` does `0.5 * (P + P.T)` after every step. If you
 write your own integration, do the same.
 
 ### PSD numerics for high-dimensional state vectors
-For larger INS-style filters one numerical pitfall worth flagging:
+For larger INS-style filters, one numerical pitfall worth flagging:
 clipping individual diagonal entries of an LDL-form covariance can
-violate PSD. **Don't clip diagonals.** If you need to ceiling the
-worst-case `R`, scale the *whole matrix* down by the largest-axis ratio:
+break PSD-ness. It is safer to avoid per-entry diagonal clipping. If
+you need to bound the worst-case `R`, scale the *whole matrix* down by
+the largest-axis ratio:
 ```python
 ratios = np.diag(res.wc_Sigma_v) / np.diag(R_hat)
 scale_down = max(1.0, ratios.max())
@@ -424,22 +433,18 @@ dr_mmse_pkg/
 ## 9. What this package is and isn't
 
 **Is**: a dataset-agnostic, filter-agnostic per-step DR Kalman update
-that compiles cleanly on common targets and gives you correct numerics
-out of the box. The hard part of the implementation (the BW-oracle math,
-the APA decomposition, PSD safeguarding) is done.
+that compiles cleanly on common targets and produces correct numerics
+by default. The implementation work (the BW-oracle math, the APA
+decomposition, PSD safeguarding) is in place.
 
 **Isn't**:
 
 * A full filter. You bring your own EKF / ESKF / INS. This package
   replaces only the measurement-update step.
-* A learned noise-covariance adapter. Predicting `(μ_v, R̂)` from raw
-  sensor features needs training data and is out of scope. DR-MMSE on
-  its own is enough to be a useful robustifier — a learned adapter on
-  top is a separable concern.
 * An online θ-selector. `(θ_w, θ_v)` are tuned offline.
 * A real-time guarantee. Worst-case latency is bounded by
-  `fw_exact_iters` but not deterministic at the OS level — pin to a
-  real-time priority if your stack needs hard deadlines.
+  `fw_exact_iters` but is not deterministic at the OS level — pin to
+  a real-time priority if your stack requires hard deadlines.
 
 ---
 
